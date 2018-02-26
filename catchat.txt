@@ -1,0 +1,183 @@
+;;;; File eliza1.lisp: Basic version of the Eliza program
+
+;;; The basic are in auxfns.lisp; look for "PATTERN MATCHING FACILITY"
+
+;; New version of pat-match with segment variables
+
+(defun variable-p (x)
+  "Is x a variable (a symbol beginning with `?')?"
+  (and (symbolp x) (equal (elt (symbol-name x) 0) #\?)))
+
+(defun pat-match (pattern input &optional (bindings no-bindings))
+  "Match pattern against input in the context of the bindings"
+  (cond ((eq bindings fail) fail)
+        ((variable-p pattern)
+         (match-variable pattern input bindings))
+        ((eql pattern input) bindings)
+        ((segment-pattern-p pattern)                ; ***
+         (segment-match pattern input bindings))    ; ***
+        ((and (consp pattern) (consp input)) 
+         (pat-match (rest pattern) (rest input)
+                    (pat-match (first pattern) (first input) 
+                               bindings)))
+        (t fail)))
+
+(defun segment-pattern-p (pattern)
+  "Is this a segment matching pattern: ((?* var) . pat)"
+  (and (consp pattern)
+       (starts-with (first pattern) '?*)))
+
+;;; ==============================
+
+(defun segment-match (pattern input bindings &optional (start 0))
+  "Match the segment pattern ((?* var) . pat) against input."
+  (let ((var (second (first pattern)))
+        (pat (rest pattern)))
+    (if (null pat)
+        (match-variable var input bindings)
+        ;; We assume that pat starts with a constant
+        ;; In other words, a pattern can't have 2 consecutive vars
+        (let ((pos (position (first pat) input
+                             :start start :test #'equal)))
+          (if (null pos)
+              fail
+              (let ((b2 (pat-match pat (subseq input pos) bindings)))
+                ;; If this match failed, try another longer one
+                ;; If it worked, check that the variables match
+                (if (eq b2 fail)
+                    (segment-match pattern input bindings (+ pos 1))
+                    (match-variable var (subseq input 0 pos) b2))))))))
+
+;;; ==============================
+
+(defun segment-match (pattern input bindings &optional (start 0))
+  "Match the segment pattern ((?* var) . pat) against input."
+  (let ((var (second (first pattern)))
+        (pat (rest pattern)))
+    (if (null pat)
+        (match-variable var input bindings)
+        ;; We assume that pat starts with a constant
+        ;; In other words, a pattern can't have 2 consecutive vars
+        (let ((pos (position (first pat) input
+                             :start start :test #'equal)))
+          (if (null pos)
+              fail
+              (let ((b2 (pat-match
+                          pat (subseq input pos)
+                          (match-variable var (subseq input 0 pos)
+                                          bindings))))
+                ;; If this match failed, try another longer one
+                (if (eq b2 fail)
+                    (segment-match pattern input bindings (+ pos 1))
+                    b2)))))))
+
+;;; ==============================
+
+(defun rule-pattern (rule) (first rule))
+(defun rule-responses (rule) (rest rule))
+
+;;; ==============================
+
+(defparameter *catchat-rules*
+ '((((?* ?x) hello (?* ?y))      
+    (How do you do.  Please talk about your cat.))
+   (((?* ?x) My cat is (?* ?y))     
+    (How ?y is you cat?)
+    (Your cat is ?y. Is that a problem?) (Do you like ?y cats?))
+   (((?* ?x) A lot (?* ?y)) 
+    (Good! I love that) (Do you like that ?))
+   (((?* ?x) not a problem (?* ?y))
+    (Why not?) (Good! I'm glad we agree!))
+   (((?* ?x) it's a problem (?* ?y))       
+    (Why you think that a problem?) (Really? What you can do about that?))
+   (((?* ?x) food (?* ?y))     
+    (Is that your cat favorit food?)(Does you cat like ?y ?)(How often you feed you cat?))
+   (((?* ?x) no (?* ?y))     
+    (Whay not ?)(I see.))
+   (((?* ?x) yes (?* ?y))     
+    (Good!)(Nice!))
+    (((?* ?x) hair (?* ?y))
+    (What color hair your cat have?)(Oh really! My cat has black hair!))
+    (((?* ?x) Do you like cats (?* ?y))
+    (Cats are the best pets ever!)(Yes! Don't you?))
+    (((?* ?x) hate cats (?* ?y))
+    ( Why ?)(You shouldn't! They are lovely!))
+    (((?* ?x) allergy (?* ?y))
+    (What kind of allergy?)(Is that major concern about cats?))
+    (((?* ?x) Scratching (?* ?y))
+    (Scratching ?y ? Is that a problem ?)(Scratching is a natural behavior for cats.You can buy a scratching furniture for your cat ans solve your problem.))
+    (((?* ?x) play with (?* ?y))
+    (How often do you play with you cat?)(?y is your cat favorite toy?))
+    (((?* ?x) hunt (?* ?y))
+    (Your cat likes to hunt ?y ?)(Do you like him to hunt ?y ?))
+    (((?* ?x) I remember (?* ?y)) 
+    (Do you often think of ?y)
+    (Does thinking of ?y bring anything else to mind?)
+    (What else do you remember)
+    (Why do you recall ?y right now?)
+    (What in the present situation reminds you of ?y))
+    (((?* ?x) what (?* ?y))
+    (Why do you ask?)
+    (Does that question interest you?)
+    (What is it you really want to know about cats?)
+    (What do you think that about cats?)
+    (What cat comes to your mind when you ask that?))
+    ;;((bye)
+    ;;(good bye))
+    (((?* ?x))               
+    (Very interesting)
+    (I am not sure I understand you fully)
+    (What does that suggest to you?)
+    (Please continue)
+    (Go on) 
+    (Do you feel strongly about discussing such things?)
+    (How many cats do you have?))))
+
+;;; ==============================
+
+(defun catchat ()
+  "Respond to user input using pattern matching rules."
+  (loop
+    (print 'catchat>)
+    (write (flatten (use-catchat-rules (read))) :pretty t)))
+    ;; (print-with-spaces response)
+      ;;(if (equal response '(good bye)) (RETURN))))
+
+(defun print-with-spaces (list)
+  (format t "~{~a ~}" list))
+
+(defun use-catchat-rules (input)
+  "Find some rule with which to transform the input."
+  (some #'(lambda (rule)
+            (let ((result (pat-match (rule-pattern rule) input)))
+              (if (not (eq result fail))
+                  (sublis (switch-viewpoint result)
+                          (random-elt (rule-responses rule))))))
+        *catchat-rules*))
+
+(defun switch-viewpoint (words)
+  "Change I to you and vice versa, and so on."
+  (sublis '((I . you) (you . I) (me . you) (am . are))
+          words))
+
+;;; ==============================
+
+(defun flatten (the-list)
+  "Append together elements (or lists) in the list."
+  (mappend #'mklist the-list))
+
+(defun mklist (x)
+  "Return x if it is a list, otherwise (x)."
+  (if (listp x)
+      x
+      (list x)))
+
+(defun mappend (fn the-list)	
+  "Apply fn to each element of list and append the results."
+  (apply #'append (mapcar fn the-list)))
+
+(defun random-elt (choices)
+  "Choose an element from a list at random."
+  (elt choices (random (length choices))))
+
+
